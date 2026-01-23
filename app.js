@@ -33,6 +33,8 @@ const resetGame = () => {
     gameState.players.black = null;
     gameState.playerNames.white = null;
     gameState.playerNames.black = null;
+    gameState.disconnectedPlayers.white = null;
+    gameState.disconnectedPlayers.black = null;
     gameState.spectators = [];
     gameState.gameStarted = false;
     gameState.lastActivity = Date.now();
@@ -64,6 +66,8 @@ const handleDisconnection = (socketId) => {
         const opponentColor = isWhite ? 'black' : 'white';
         const opponentId = gameState.players[opponentColor];
         
+        gameState.disconnectedPlayers[color] = socketId;
+        
         if (opponentId) {
             io.to(opponentId).emit("opponentDisconnected", {
                 message: "Opponent disconnected. Waiting for reconnection...",
@@ -83,7 +87,6 @@ const handleDisconnection = (socketId) => {
         }, 20000);
         
         gameState.players[color] = null;
-        gameState.playerNames[color] = null;
         gameState.gameStarted = false;
     }
 };
@@ -116,35 +119,123 @@ const checkGameOver = () => {
 io.on("connection", function(uniquesocket) {
     console.log('New connection:', uniquesocket.id);
     
-    if (!gameState.players.white) {
+    let reconnected = false;
+    
+    uniquesocket.on('reconnectPlayer', (data) => {
+        const { role, oldSocketId } = data;
+        
+        if (role === 'w' && (!gameState.players.white || gameState.disconnectedPlayers.white === oldSocketId)) {
+            gameState.players.white = uniquesocket.id;
+            gameState.disconnectedPlayers.white = null;
+            uniquesocket.emit("playerRole", "w");
+            uniquesocket.emit("boardState", gameState.chess.fen());
+            uniquesocket.emit("gameResumed", "Reconnected as White!");
+            reconnected = true;
+            
+            if (disconnectTimer) {
+                clearTimeout(disconnectTimer);
+                disconnectTimer = null;
+            }
+            
+            if (gameState.players.black) {
+                gameState.gameStarted = true;
+                io.emit("gameStarted");
+            }
+        } else if (role === 'b' && (!gameState.players.black || gameState.disconnectedPlayers.black === oldSocketId)) {
+            gameState.players.black = uniquesocket.id;
+            gameState.disconnectedPlayers.black = null;
+            uniquesocket.emit("playerRole", "b");
+            uniquesocket.emit("boardState", gameState.chess.fen());
+            uniquesocket.emit("gameResumed", "Reconnected as Black!");
+            reconnected = true;
+            
+            if (disconnectTimer) {
+                clearTimeout(disconnectTimer);
+                disconnectTimer = null;
+            }
+            
+            if (gameState.players.white) {
+                gameState.gameStarted = true;
+                io.emit("gameStarted");
+            }
+        }
+    });
+    
+    if (gameState.disconnectedPlayers.white === uniquesocket.id) {
         gameState.players.white = uniquesocket.id;
-        gameState.playerNames.white = `Player ${uniquesocket.id.substring(0, 5)}`;
         uniquesocket.emit("playerRole", "w");
-        uniquesocket.emit("waitingForOpponent", "Waiting for opponent to join...");
-        console.log('White player connected:', uniquesocket.id);
+        uniquesocket.emit("boardState", gameState.chess.fen());
+        uniquesocket.emit("gameResumed", "You reconnected! Game continues...");
+        console.log('White player reconnected:', uniquesocket.id);
+        reconnected = true;
         
         if (disconnectTimer) {
             clearTimeout(disconnectTimer);
             disconnectTimer = null;
         }
-    } else if (!gameState.players.black) {
+        
+        gameState.disconnectedPlayers.white = null;
+        
+        if (gameState.players.black) {
+            gameState.gameStarted = true;
+            io.to(gameState.players.black).emit("opponentReconnected", "Opponent reconnected! Game continues...");
+            io.emit("gameStarted");
+        }
+    } else if (gameState.disconnectedPlayers.black === uniquesocket.id) {
         gameState.players.black = uniquesocket.id;
-        gameState.playerNames.black = `Player ${uniquesocket.id.substring(0, 5)}`;
         uniquesocket.emit("playerRole", "b");
-        console.log('Black player connected:', uniquesocket.id);
+        uniquesocket.emit("boardState", gameState.chess.fen());
+        uniquesocket.emit("gameResumed", "You reconnected! Game continues...");
+        console.log('Black player reconnected:', uniquesocket.id);
+        reconnected = true;
         
         if (disconnectTimer) {
             clearTimeout(disconnectTimer);
             disconnectTimer = null;
         }
         
-        checkGameStart();
-    } else {
-        gameState.spectators.push(uniquesocket.id);
-        uniquesocket.emit("spectatorRole");
-        uniquesocket.emit("spectatorMessage", "You are watching this game as a spectator.");
-        console.log('Spectator connected:', uniquesocket.id);
+        gameState.disconnectedPlayers.black = null;
+        
+        if (gameState.players.white) {
+            gameState.gameStarted = true;
+            io.to(gameState.players.white).emit("opponentReconnected", "Opponent reconnected! Game continues...");
+            io.emit("gameStarted");
+        }
     }
+    
+    setTimeout(() => {
+        if (!reconnected) {
+            if (!gameState.players.white) {
+                gameState.players.white = uniquesocket.id;
+                gameState.playerNames.white = `Player ${uniquesocket.id.substring(0, 5)}`;
+                uniquesocket.emit("playerRole", "w");
+                uniquesocket.emit("waitingForOpponent", "Waiting for opponent to join...");
+                console.log('White player connected:', uniquesocket.id);
+                
+                if (disconnectTimer) {
+                    clearTimeout(disconnectTimer);
+                    disconnectTimer = null;
+                }
+            } else if (!gameState.players.black) {
+                gameState.players.black = uniquesocket.id;
+                gameState.playerNames.black = `Player ${uniquesocket.id.substring(0, 5)}`;
+                uniquesocket.emit("playerRole", "b");
+                console.log('Black player connected:', uniquesocket.id);
+                
+                if (disconnectTimer) {
+                    clearTimeout(disconnectTimer);
+                    disconnectTimer = null;
+                }
+                
+                checkGameStart();
+            } else {
+                gameState.spectators.push(uniquesocket.id);
+                uniquesocket.emit("spectatorRole");
+                uniquesocket.emit("spectatorMessage", "You are watching this game as a spectator.");
+                console.log('Spectator connected:', uniquesocket.id);
+            }
+        }
+    }, 100);
     
     uniquesocket.emit("boardState", gameState.chess.fen());
     
