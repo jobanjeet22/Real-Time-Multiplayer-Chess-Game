@@ -6,28 +6,35 @@
     <title><%= title %></title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+        }
+
+        .game-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
         .chessboard {
             display: grid;
-            grid-template-columns: repeat(8, minmax(0, 1fr));
-            grid-template-rows: repeat(8, minmax(0, 1fr));
-            width: 400px;
-            height: 400px;
-            transform: rotate(0deg);
-            border: 4px solid #333;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-        }
-
-        .piece.white {
-            color: white;
-            filter: drop-shadow(0 0 2px rgba(0, 0, 0, 1));
-        }
-
-        .piece.black {
-            color: black;
-        }
-
-        .flipped {
-            transform: rotate(180deg);
+            grid-template-columns: repeat(8, 1fr);
+            grid-template-rows: repeat(8, 1fr);
+            width: 100%;
+            max-width: 560px;
+            aspect-ratio: 1;
+            border: 3px solid #312e2b;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 0 auto;
+            position: relative;
         }
 
         .square {
@@ -35,26 +42,94 @@
             align-items: center;
             justify-content: center;
             position: relative;
-            transition: all 0.2s ease;
+            transition: background-color 0.15s ease;
+            cursor: pointer;
         }
 
         .square.light {
-            background-color: #f0d9b5;
+            background-color: #ebecd0;
         }
 
         .square.dark {
-            background-color: #b58863;
+            background-color: #739552;
+        }
+
+        .square.selected {
+            background-color: #baca44 !important;
+            box-shadow: inset 0 0 0 3px rgba(186, 202, 68, 0.8);
+        }
+
+        .square.last-move {
+            background-color: rgba(155, 199, 0, 0.41) !important;
+        }
+
+        .square.possible-move::after {
+            content: '';
+            position: absolute;
+            width: 25%;
+            height: 25%;
+            background-color: rgba(20, 85, 30, 0.5);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .square.capture-highlight::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, transparent 65%, rgba(20, 85, 30, 0.5) 65%, rgba(20, 85, 30, 0.5) 80%, transparent 80%);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .rank-label, .file-label {
+            position: absolute;
+            font-size: 11px;
+            font-weight: 600;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .square.light .rank-label,
+        .square.light .file-label {
+            color: #739552;
+        }
+
+        .square.dark .rank-label,
+        .square.dark .file-label {
+            color: #ebecd0;
+        }
+
+        .rank-label {
+            top: 3px;
+            left: 4px;
+        }
+
+        .file-label {
+            bottom: 2px;
+            right: 4px;
         }
 
         .piece {
-            font-size: 42px;
+            font-size: clamp(40px, 8vw, 70px);
             cursor: pointer;
             user-select: none;
             transition: transform 0.1s ease;
+            position: relative;
+            z-index: 20;
+            line-height: 1;
         }
 
-        .piece:hover {
-            transform: scale(1.1);
+        .piece.white {
+            color: #ffffff;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+        }
+
+        .piece.black {
+            color: #000000;
+            filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.2));
         }
 
         .piece.draggable {
@@ -65,44 +140,23 @@
             cursor: grabbing;
         }
 
-        .dragging {
-            opacity: 0.5;
+        .piece:hover {
+            transform: scale(1.08);
         }
 
-        .flipped .piece {
-            transform: rotate(180deg);
-        }
-
-        .flipped .piece:hover {
-            transform: rotate(180deg) scale(1.1);
-        }
-
-        .square.selected {
-            background-color: rgba(127, 201, 127, 0.6) !important;
-            box-shadow: inset 0 0 0 3px #4CAF50;
-        }
-
-        .square.possible-move::after {
-            content: '';
-            position: absolute;
-            width: 28%;
-            height: 28%;
-            background-color: rgba(76, 175, 80, 0.6);
-            border-radius: 50%;
-            pointer-events: none;
-            z-index: 10;
-        }
-
-        .square.capture-highlight::after {
-            content: '';
-            position: absolute;
-            width: 90%;
-            height: 90%;
-            border: 4px solid rgba(239, 68, 68, 0.7);
-            border-radius: 50%;
-            pointer-events: none;
-            box-sizing: border-box;
-            z-index: 10;
+        @keyframes captureExplode {
+            0% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+            50% {
+                transform: scale(1.5) rotate(180deg);
+                opacity: 0.5;
+            }
+            100% {
+                transform: scale(0) rotate(360deg);
+                opacity: 0;
+            }
         }
 
         .chessboard.flipped {
@@ -113,79 +167,211 @@
             transform: rotate(180deg);
         }
 
+        .chessboard.flipped .piece:hover {
+            transform: rotate(180deg) scale(1.08);
+        }
+
+        .chessboard.flipped .rank-label,
+        .chessboard.flipped .file-label {
+            transform: rotate(180deg);
+        }
+
         .turn-indicator {
-            padding: 16px 24px;
+            padding: 18px 28px;
             border-radius: 12px;
-            font-size: 20px;
-            font-weight: bold;
+            font-size: 22px;
+            font-weight: 700;
             text-align: center;
             transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+            min-width: 100%;
+            letter-spacing: 0.5px;
         }
 
         .turn-indicator.white-turn {
-            background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
-            color: #333;
-            border: 3px solid #666;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            color: #1e293b;
+            border: 3px solid #475569;
         }
 
         .turn-indicator.black-turn {
-            background: linear-gradient(135deg, #333 0%, #1a1a1a 100%);
+            background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+            color: #f8fafc;
+            border: 3px solid #cbd5e1;
+        }
+
+        .turn-indicator.waiting {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            color: #1e293b;
+            border: 3px solid #d97706;
+            animation: waitPulse 2s infinite;
+        }
+
+        .turn-indicator.gameover {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
             color: white;
-            border: 3px solid #f5f5f5;
+            border: 3px solid #047857;
+            font-size: 24px;
+            animation: winPulse 1s infinite;
+        }
+
+        .turn-indicator.draw {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            border: 3px solid #4338ca;
+            font-size: 22px;
+        }
+
+        @keyframes winPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+
+        @keyframes waitPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.9; transform: scale(0.98); }
         }
 
         .your-turn {
-            color: #4CAF50;
-            font-weight: bold;
+            color: #10b981;
+            font-size: 16px;
+            margin-left: 8px;
             animation: pulse 1.5s infinite;
+        }
+
+        .check-indicator {
+            color: #ef4444;
+            font-weight: 800;
+            margin-left: 10px;
+            animation: shake 0.5s infinite;
         }
 
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
+            50% { opacity: 0.4; }
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-2px); }
+            75% { transform: translateX(2px); }
+        }
+
+        .status-message {
+            padding: 14px 24px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
+            margin-top: 16px;
+            min-width: 100%;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .status-message.success {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            display: block;
+        }
+
+        .status-message.error {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            display: block;
+        }
+
+        .status-message.warning {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            display: block;
+        }
+
+        .status-message.waiting {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white;
+            display: block;
+        }
+
+        .status-message.info {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: white;
+            display: block;
+        }
+
+        .status-message.gameover {
+            background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+            color: white;
+            display: block;
+            font-size: 20px;
+            padding: 20px 32px;
+            font-weight: 700;
         }
 
         .game-info {
-            color: #a0a0a0;
-            font-size: 14px;
+            color: #94a3b8;
+            font-size: 13px;
             text-align: center;
             margin-top: 16px;
+            max-width: 100%;
+            line-height: 1.6;
         }
 
-        
         @media (max-width: 640px) {
             .chessboard {
-                width: 320px;
-                height: 320px;
+                max-width: 90vw;
             }
 
             .piece {
-                font-size: 32px;
+                font-size: clamp(32px, 10vw, 50px);
             }
 
             .turn-indicator {
-                font-size: 16px;
-                padding: 12px 16px;
+                font-size: 18px;
+                padding: 14px 20px;
+            }
+
+            .status-message {
+                font-size: 14px;
+                padding: 12px 18px;
+            }
+
+            .game-info {
+                font-size: 11px;
             }
         }
     </style>
 </head>
 <body>
-    <div class="w-full min-h-screen bg-zinc-900 flex items-center justify-center p-4">
-        <div class="flex flex-col items-center gap-6">
-            <div class="turn-indicator white-turn">
-                <strong>Current Turn:</strong> White
-            </div>
+    <div class="w-full min-h-screen flex items-center justify-center p-4">
+        <div class="game-container w-full">
+            <div class="flex flex-col items-center gap-5">
+                <!-- Turn Indicator -->
+                <div class="turn-indicator white-turn w-full">
+                    <strong>Current Turn:</strong> White
+                </div>
 
-            <div class="chessboard"></div>
+                <!-- Status Message -->
+                <div class="status-message w-full"></div>
 
-            <div class="game-info">
-                Click or drag pieces to move • Green dots = possible moves • Red circles = captures
+                <!-- Chessboard -->
+                <div class="chessboard w-full"></div>
+
+                <!-- Game Info -->
+                <div class="game-info w-full">
+                    Click or drag pieces • Green = moves • Ring = captures
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- Scripts -->
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js" 
             integrity="sha384-mkQ3/7FUtcGyoppY6bz/PORYoGqOl7/aSUMn2ymDOJcapfS6PHqxhRTMh1RR0Q6+" 
             crossorigin="anonymous"></script>

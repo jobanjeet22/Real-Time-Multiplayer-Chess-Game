@@ -1,4 +1,3 @@
-
 const express = require('express');
 const app = express();
 const socket = require('socket.io');
@@ -9,98 +8,200 @@ const path = require('path');
 const server = http.createServer(app);
 const io = socket(server);
 
-const chess = new Chess();
-let players = {};
-let currentPlayer = 'w';
+let gameState = {
+    chess: new Chess(),
+    players: { white: null, black: null },
+    playerNames: { white: null, black: null },
+    disconnectedPlayers: { white: null, black: null },
+    spectators: [],
+    gameStarted: false,
+    lastActivity: Date.now()
+};
+
+let disconnectTimer = null;
 
 app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => {
-    res.render('index', { title: 'Chess Game' });
+    res.render('index', { title: 'Realtime Chess Game' });
 });
+
+const resetGame = () => {
+    gameState.chess = new Chess();
+    gameState.players.white = null;
+    gameState.players.black = null;
+    gameState.playerNames.white = null;
+    gameState.playerNames.black = null;
+    gameState.spectators = [];
+    gameState.gameStarted = false;
+    gameState.lastActivity = Date.now();
+    
+    if (disconnectTimer) {
+        clearTimeout(disconnectTimer);
+        disconnectTimer = null;
+    }
+    
+    console.log('Game reset');
+    io.emit("gameReset");
+};
+
+const checkGameStart = () => {
+    if (gameState.players.white && gameState.players.black && !gameState.gameStarted) {
+        gameState.gameStarted = true;
+        io.emit("gameStarted");
+        io.emit("boardState", gameState.chess.fen());
+        console.log('Game started!');
+    }
+};
+
+const handleDisconnection = (socketId) => {
+    const isWhite = gameState.players.white === socketId;
+    const isBlack = gameState.players.black === socketId;
+    
+    if (isWhite || isBlack) {
+        const color = isWhite ? 'white' : 'black';
+        const opponentColor = isWhite ? 'black' : 'white';
+        const opponentId = gameState.players[opponentColor];
+        
+        if (opponentId) {
+            io.to(opponentId).emit("opponentDisconnected", {
+                message: "Opponent disconnected. Waiting for reconnection...",
+                color: color
+            });
+        }
+        
+        if (disconnectTimer) clearTimeout(disconnectTimer);
+        
+        disconnectTimer = setTimeout(() => {
+            console.log(`Player ${color} did not reconnect. Resetting game.`);
+            io.emit("playerLeft", {
+                message: "Opponent left the game. Game will reset.",
+                color: color
+            });
+            setTimeout(() => { resetGame(); }, 2000);
+        }, 20000);
+        
+        gameState.players[color] = null;
+        gameState.playerNames[color] = null;
+        gameState.gameStarted = false;
+    }
+};
+
+const checkGameOver = () => {
+    if (gameState.chess.game_over()) {
+        let message = "";
+        
+        if (gameState.chess.in_checkmate()) {
+            const winner = gameState.chess.turn() === 'w' ? 'Black' : 'White';
+            message = `Checkmate! ${winner} wins! 👑`;
+        } else if (gameState.chess.in_stalemate()) {
+            message = "Stalemate! Game drawn! 🤝";
+        } else if (gameState.chess.in_threefold_repetition()) {
+            message = "Draw by threefold repetition! 🤝";
+        } else if (gameState.chess.insufficient_material()) {
+            message = "Draw by insufficient material! 🤝";
+        } else if (gameState.chess.in_draw()) {
+            message = "Draw by 50-move rule! 🤝";
+        }
+        
+        io.emit("gameOver", message);
+        console.log('Game Over:', message);
+        setTimeout(() => { resetGame(); }, 5000);
+        return true;
+    }
+    return false;
+};
 
 io.on("connection", function(uniquesocket) {
     console.log('New connection:', uniquesocket.id);
     
-    if (!players.white) {
-        players.white = uniquesocket.id;
+    if (!gameState.players.white) {
+        gameState.players.white = uniquesocket.id;
+        gameState.playerNames.white = `Player ${uniquesocket.id.substring(0, 5)}`;
         uniquesocket.emit("playerRole", "w");
+        uniquesocket.emit("waitingForOpponent", "Waiting for opponent to join...");
         console.log('White player connected:', uniquesocket.id);
-    } else if (!players.black) {
-        players.black = uniquesocket.id;
-        uniquesocket.emit('playerRole', 'b');
+        
+        if (disconnectTimer) {
+            clearTimeout(disconnectTimer);
+            disconnectTimer = null;
+        }
+    } else if (!gameState.players.black) {
+        gameState.players.black = uniquesocket.id;
+        gameState.playerNames.black = `Player ${uniquesocket.id.substring(0, 5)}`;
+        uniquesocket.emit("playerRole", "b");
         console.log('Black player connected:', uniquesocket.id);
+        
+        if (disconnectTimer) {
+            clearTimeout(disconnectTimer);
+            disconnectTimer = null;
+        }
+        
+        checkGameStart();
     } else {
+        gameState.spectators.push(uniquesocket.id);
         uniquesocket.emit("spectatorRole");
+        uniquesocket.emit("spectatorMessage", "You are watching this game as a spectator.");
         console.log('Spectator connected:', uniquesocket.id);
     }
     
-    uniquesocket.emit("boardState", chess.fen());
+    uniquesocket.emit("boardState", gameState.chess.fen());
+    
+    io.emit("playersInfo", {
+        white: gameState.playerNames.white,
+        black: gameState.playerNames.black,
+        gameStarted: gameState.gameStarted
+    });
     
     uniquesocket.on("disconnect", () => {
         console.log('Player disconnected:', uniquesocket.id);
-        
-        if (uniquesocket.id === players.white) {
-            delete players.white;
-            console.log('White player disconnected');
-        } else if (uniquesocket.id === players.black) {
-            delete players.black;
-            console.log('Black player disconnected');
-        }
+        gameState.spectators = gameState.spectators.filter(id => id !== uniquesocket.id);
+        handleDisconnection(uniquesocket.id);
     });
     
     uniquesocket.on("move", (move) => {
         try {
-            if (chess.turn() === 'w' && uniquesocket.id !== players.white) {
-                console.log('Not white player\'s turn');
-                return;
-            }
-            if (chess.turn() === 'b' && uniquesocket.id !== players.black) {
-                console.log('Not black player\'s turn');
+            if (!gameState.gameStarted) {
                 return;
             }
             
-            const result = chess.move(move);
+            if (gameState.chess.turn() === 'w' && uniquesocket.id !== gameState.players.white) {
+                return;
+            }
+            if (gameState.chess.turn() === 'b' && uniquesocket.id !== gameState.players.black) {
+                return;
+            }
+            
+            const result = gameState.chess.move(move);
             
             if (result) {
-                currentPlayer = chess.turn();
+                gameState.lastActivity = Date.now();
                 io.emit("move", move);
-                io.emit("boardState", chess.fen());
-                
+                io.emit("boardState", gameState.chess.fen());
                 console.log('Move executed:', move);
-                
-                if (chess.isGameOver()) {
-                    if (chess.isCheckmate()) {
-                        const winner = chess.turn() === 'w' ? 'Black' : 'White';
-                        io.emit("gameOver", `Checkmate! ${winner} wins!`);
-                        console.log(`Game Over: ${winner} wins by checkmate`);
-                    } else if (chess.isDraw()) {
-                        io.emit("gameOver", "Game drawn!");
-                        console.log('Game Over: Draw');
-                    } else if (chess.isStalemate()) {
-                        io.emit("gameOver", "Stalemate!");
-                        console.log('Game Over: Stalemate');
-                    } else if (chess.isThreefoldRepetition()) {
-                        io.emit("gameOver", "Draw by threefold repetition!");
-                        console.log('Game Over: Threefold repetition');
-                    } else if (chess.isInsufficientMaterial()) {
-                        io.emit("gameOver", "Draw by insufficient material!");
-                        console.log('Game Over: Insufficient material');
-                    }
-                }
-            } else {
-                console.log('Invalid move attempted:', move);
-                uniquesocket.emit("invalidMove", move);
+                checkGameOver();
             }
             
         } catch (error) {
             console.log('Error processing move:', error);
-            uniquesocket.emit("invalidMove", move);
         }
+    });
+    
+    uniquesocket.on("requestRematch", () => {
+        resetGame();
     });
 });
 
-server.listen(3000, () => {
-    console.log('Chess server listening on http://localhost:3000');
+setInterval(() => {
+    const inactiveTime = Date.now() - gameState.lastActivity;
+    if (inactiveTime > 30 * 60 * 1000 && gameState.gameStarted) {
+        console.log('Game inactive for 30 minutes, resetting...');
+        resetGame();
+    }
+}, 60000);
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Chess server listening on port ${PORT}`);
 });
