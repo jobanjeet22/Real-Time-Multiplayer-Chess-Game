@@ -273,10 +273,21 @@ const getPieceUnicode = (piece) => {
 
 socket.on("playerRole", (role) => {
     playerRole = role;
+    localStorage.setItem('chessPlayerRole', role);
+    localStorage.setItem('chessSocketId', socket.id);
     const roleText = role === 'w' ? 'White' : 'Black';
     showStatus(`You are ${roleText}`, 'success');
     setTimeout(() => hideStatus(), 2000);
     renderBoard();
+});
+
+socket.on("connect", () => {
+    const savedRole = localStorage.getItem('chessPlayerRole');
+    const savedSocketId = localStorage.getItem('chessSocketId');
+    
+    if (savedRole && savedSocketId) {
+        socket.emit('reconnectPlayer', { role: savedRole, oldSocketId: savedSocketId });
+    }
 });
 
 socket.on("spectatorRole", () => {
