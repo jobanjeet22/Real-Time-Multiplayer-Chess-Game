@@ -1,3 +1,5 @@
+
+
 const express = require('express');
 const app = express();
 const socket = require('socket.io');
@@ -12,13 +14,12 @@ let gameState = {
     chess: new Chess(),
     players: { white: null, black: null },
     playerNames: { white: null, black: null },
-    disconnectedPlayers: { white: null, black: null },
     spectators: [],
     gameStarted: false,
     lastActivity: Date.now()
 };
 
-let disconnectTimer = null;
+let disconnectTimers = {};
 
 app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
@@ -33,16 +34,14 @@ const resetGame = () => {
     gameState.players.black = null;
     gameState.playerNames.white = null;
     gameState.playerNames.black = null;
-    gameState.disconnectedPlayers.white = null;
-    gameState.disconnectedPlayers.black = null;
     gameState.spectators = [];
     gameState.gameStarted = false;
     gameState.lastActivity = Date.now();
     
-    if (disconnectTimer) {
-        clearTimeout(disconnectTimer);
-        disconnectTimer = null;
-    }
+    Object.keys(disconnectTimers).forEach(key => {
+        clearTimeout(disconnectTimers[key]);
+    });
+    disconnectTimers = {};
     
     console.log('Game reset');
     io.emit("gameReset");
@@ -66,8 +65,6 @@ const handleDisconnection = (socketId) => {
         const opponentColor = isWhite ? 'black' : 'white';
         const opponentId = gameState.players[opponentColor];
         
-        gameState.disconnectedPlayers[color] = socketId;
-        
         if (opponentId) {
             io.to(opponentId).emit("opponentDisconnected", {
                 message: "Opponent disconnected. Waiting for reconnection...",
@@ -75,18 +72,21 @@ const handleDisconnection = (socketId) => {
             });
         }
         
-        if (disconnectTimer) clearTimeout(disconnectTimer);
+        if (disconnectTimers[color]) {
+            clearTimeout(disconnectTimers[color]);
+        }
         
-        disconnectTimer = setTimeout(() => {
+        disconnectTimers[color] = setTimeout(() => {
             console.log(`Player ${color} did not reconnect. Resetting game.`);
             io.emit("playerLeft", {
                 message: "Opponent left the game. Game will reset.",
                 color: color
             });
             setTimeout(() => { resetGame(); }, 2000);
-        }, 20000);
+        }, 30000);
         
         gameState.players[color] = null;
+        gameState.playerNames[color] = null;
         gameState.gameStarted = false;
     }
 };
@@ -126,9 +126,9 @@ io.on("connection", function(uniquesocket) {
         uniquesocket.emit("waitingForOpponent", "Waiting for opponent to join...");
         console.log('White player connected:', uniquesocket.id);
         
-        if (disconnectTimer) {
-            clearTimeout(disconnectTimer);
-            disconnectTimer = null;
+        if (disconnectTimers['white']) {
+            clearTimeout(disconnectTimers['white']);
+            delete disconnectTimers['white'];
         }
     } else if (!gameState.players.black) {
         gameState.players.black = uniquesocket.id;
@@ -136,9 +136,9 @@ io.on("connection", function(uniquesocket) {
         uniquesocket.emit("playerRole", "b");
         console.log('Black player connected:', uniquesocket.id);
         
-        if (disconnectTimer) {
-            clearTimeout(disconnectTimer);
-            disconnectTimer = null;
+        if (disconnectTimers['black']) {
+            clearTimeout(disconnectTimers['black']);
+            delete disconnectTimers['black'];
         }
         
         checkGameStart();
@@ -159,7 +159,12 @@ io.on("connection", function(uniquesocket) {
     
     uniquesocket.on("disconnect", () => {
         console.log('Player disconnected:', uniquesocket.id);
-        gameState.spectators = gameState.spectators.filter(id => id !== uniquesocket.id);
+        
+        const spectatorIndex = gameState.spectators.indexOf(uniquesocket.id);
+        if (spectatorIndex > -1) {
+            gameState.spectators.splice(spectatorIndex, 1);
+        }
+        
         handleDisconnection(uniquesocket.id);
     });
     
