@@ -1,3 +1,5 @@
+
+
 const socket = io();
 const chess = new Chess();
 const boardElement = document.querySelector('.chessboard');
@@ -281,7 +283,7 @@ socket.on("playerRole", (role) => {
 
 socket.on("spectatorRole", () => {
     playerRole = null;
-    showStatus("Spectating", 'info');
+    showStatus("You are spectating - Game is full", 'info');
     renderBoard();
 });
 
@@ -330,7 +332,7 @@ socket.on("invalidMove", (message) => {
 
 socket.on("opponentDisconnected", (data) => {
     gameStarted = false;
-    showStatus("Opponent disconnected! Waiting 20 seconds...", 'warning');
+    showStatus("Opponent disconnected! Waiting 30 seconds...", 'warning');
     renderBoard();
 });
 
@@ -350,7 +352,7 @@ socket.on("gameResumed", (message) => {
 
 socket.on("playerLeft", (data) => {
     gameStarted = false;
-    showStatus("Opponent didn't reconnect. Starting new game...", 'error');
+    showStatus("Opponent left. Starting new game...", 'error');
     setTimeout(() => {
         hideStatus();
     }, 3000);
@@ -370,6 +372,7 @@ socket.on("gameReset", () => {
     gameStarted = false;
     selectedSquare = null;
     moveHistory = [];
+    playerRole = null;
     clearHighlights();
     hideStatus();
     renderBoard();
